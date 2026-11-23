@@ -1,31 +1,39 @@
-/**
- * news-image-20261122 v2 (evening edition) — copy ./entry.png to the
- * output directory.
- *
- * Deterministic: byte-for-byte copy, so repeated runs produce identical
- * output. Node 22, stdlib only, no network.
- */
+// main.ts — news-image-20261122 v3 (FINAL EDITION).
+// Copies the rendered entry.png into the output directory.
+// Deterministic: a plain byte copy, no timestamps, no network.
+// Usage: node main.ts   (or: npx tsx main.ts)
+// Output dir: $MAKEFUN_OUTPUT_DIR, default "/output".
+
 import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const src = join(here, "entry.png");
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "out";
-
-// Validate the bundled image before copying: it must be a real PNG
-// (8-byte magic 89 50 4E 47 0D 0A 1A 0A) and at most 1 MiB, so a corrupt
-// or oversized file fails loudly instead of producing bad output.
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const MAX_BYTES = 1_048_576;
-const size = statSync(src).size;
-if (size > MAX_BYTES) {
-  throw new Error(`entry.png is ${size} bytes, over the 1 MiB cap`);
+const MAX_BYTES = 1 * 1024 * 1024; // competition cap: 1 MiB
+
+const repoDir = dirname(fileURLToPath(import.meta.url));
+const source = join(repoDir, "entry.png");
+const outDir = resolve(process.env.MAKEFUN_OUTPUT_DIR ?? "/output");
+const dest = join(outDir, "entry.png");
+
+const bytes = readFileSync(source);
+if (!bytes.subarray(0, 8).equals(PNG_MAGIC)) {
+  throw new Error("entry.png is not a PNG (bad magic bytes)");
 }
-const header = readFileSync(src).subarray(0, 8);
-if (!header.equals(PNG_MAGIC)) {
-  throw new Error("entry.png does not start with the PNG magic bytes");
+if (bytes.length > MAX_BYTES) {
+  throw new Error(`entry.png is ${bytes.length} bytes, over the 1 MiB cap`);
+}
+// IHDR chunk: width and height are big-endian uint32 at offsets 16 and 20.
+const width = bytes.readUInt32BE(16);
+const height = bytes.readUInt32BE(20);
+if (width > 1024 || height > 1024) {
+  throw new Error(`entry.png is ${width}x${height}, over the 1024x1024 cap`);
 }
 
 mkdirSync(outDir, { recursive: true });
-copyFileSync(src, join(outDir, "entry.png"));
+copyFileSync(source, dest);
+
+const copied = statSync(dest);
+const sha = createHash("sha256").update(readFileSync(dest)).digest("hex");
+console.log(`wrote ${dest} (${copied.size} bytes, sha256 ${sha})`);
